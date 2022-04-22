@@ -43,9 +43,8 @@ const (
 
 	qmpMigrationWaitTimeout = 5 * time.Second
 
-	sevKvmParameterPath = "/sys/module/kvm_amd/parameters/sev"
-
 	// Guest Owner Proxy Client
+	// TODO: relocate to ./virtcontainers/hypervisor_linux_amd64.go ? 
 	// gop-client is a *temporary* component of the confidential containers CCv0 demo.
 	//
 	// The guest owner proxy (gop-client.py) acts as the local client for
