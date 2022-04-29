@@ -1224,6 +1224,11 @@ func (s *Sandbox) startVM(ctx context.Context) (err error) {
 		return err
 	}
 
+    // not sure how we know that this callback has been executed
+    if s.config.HypervisorConfig.ConfidentialGuest && s.config.HypervisorConfig.GuestAttestation {
+        s.hypervisor.AttestVM(ctx)
+    }
+
 	// In case of vm factory, network interfaces are hotplugged
 	// after vm is started.
 	if s.factory != nil {

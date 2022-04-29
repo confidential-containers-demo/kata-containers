@@ -955,6 +955,7 @@ func AvailableGuestProtections() (protections []string) {
 type Hypervisor interface {
 	CreateVM(ctx context.Context, id string, network Network, hypervisorConfig *HypervisorConfig) error
 	StartVM(ctx context.Context, timeout int) error
+	AttestVM(ctx context.Context) error
 
 	// If wait is set, don't actively stop the sandbox:
 	// just perform cleanup.

@@ -11,13 +11,17 @@ package virtcontainers
 import (
 	"context"
 	"fmt"
-	"os/exec"
+	"os"
 	"reflect"
-	"strings"
 	"time"
+	"log"
+	b64 "encoding/base64"
 
 	"github.com/kata-containers/kata-containers/src/runtime/virtcontainers/types"
 	"github.com/sirupsen/logrus"
+	pb "github.com/kata-containers/kata-containers/src/runtime/protocols/simple-kbs"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 
 	"github.com/intel-go/cpuid"
 	govmmQemu "github.com/kata-containers/kata-containers/src/runtime/pkg/govmm/qemu"
@@ -311,29 +315,63 @@ func (q *qemuArchBase) setupGuestAttestation(ctx context.Context, config govmmQe
 		logger := virtLog.WithField("subsystem", "SEV attestation")
 		logger.Info("Set up prelaunch attestation")
 
+		cert_chain_path := "/opt/sev/cert_chain.cert"
+		cert_chain_bin, err := os.ReadFile(cert_chain_path)
+		cert_chain := b64.StdEncoding.EncodeToString([]byte(cert_chain_bin))
+
+		if err != nil {
+		   log.Fatalf("cert chain not found: %v", err);
+		}
+
+		// gRPC connection
+		conn, err := grpc.Dial(proxy, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		if err != nil {
+		   log.Fatalf("did not connect: %v", err)
+		}
+
+		client := pb.NewKeyBrokerServiceClient(conn)
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+
+		// TODO: get the cert chain from somewhere
+		//       get the policy that we used to start the VM
+		request := pb.BundleRequest{
+			CertificateChain: string(cert_chain),
+			Policy: 0,
+		}
+		bundle_response, err := client.GetBundle(ctx, &request)
+		if err != nil {
+		   log.Fatalf("did not connect: %v", err)
+		}
+
+		launch_id := bundle_response.LaunchId
+		launch_data_path := "/opt/sev/" + launch_id
+		_ = os.Mkdir(launch_data_path, os.ModePerm)
+
+		godh_path := launch_data_path + "/godh.bin"
+		session_file_path := launch_data_path + "/session_file.bin"
+
+		//godh_bytes, _ := b64.StdEncoding.DecodeString(bundle_response.GuestOwnerPublicKey)
+		//session_file_bytes, _ := b64.StdEncoding.DecodeString(bundle_response.LaunchBlob)
+
+		_ = os.WriteFile(godh_path, []byte(bundle_response.GuestOwnerPublicKey), 0777)
+		_ = os.WriteFile(session_file_path, []byte(bundle_response.LaunchBlob), 0777)
+
+		// TODO: do something with the response. 
+		// GODH - pass to qemu 
+		// LaunchBlog - pass to qemu
+
 		// start VM in stalled state
 		config.Knobs.Stopped = true
-		// Pull the launch bundle and guest DH key from GOP client
-		// nsenter moves child process back to the host network namespace
-		cmd := exec.Command(sevGuestOwnerProxyClient, "GetBundle", proxy, path)
-		out, err := cmd.CombinedOutput()
-		cmd.Wait()
-		if err != nil {
-			logger.Error("GetBundle Failed: %s", err)
-			return config, err
-		}
-		// TODO: error check
-		out_string := strings.TrimSuffix(string(out), "\n")
-		gop_result := strings.Split(string(out_string), ",")
 
 		// Place launch args into qemuConfig.Devices struct
 		for i := range config.Devices {
 			if reflect.TypeOf(config.Devices[i]).String() == "qemu.Object" {
 				if config.Devices[i].(govmmQemu.Object).Type == govmmQemu.SEVGuest {
 					dev := config.Devices[i].(govmmQemu.Object)
-					dev.CertFilePath = gop_result[0]
-					dev.SessionFilePath = gop_result[1]
-					dev.DeviceID = gop_result[2]
+					dev.CertFilePath =  godh_path
+					dev.SessionFilePath = session_file_path
+					dev.DeviceID = launch_id
 					dev.KernelHashes = true
 					config.Devices[i] = dev
 					break
@@ -348,16 +386,16 @@ func (q *qemuArchBase) setupGuestAttestation(ctx context.Context, config govmmQe
 
 // wait for prelaunch attestation to complete
 func (q *qemuArchBase) prelaunchAttestation(ctx context.Context, qmp *govmmQemu.QMP, config govmmQemu.Config, path string, proxy string, keyset string) error {
+  	launch_id := ""
 	switch q.protection {
 	case sevProtection:
 		logger := virtLog.WithField("subsystem", "SEV attestation")
 		logger.Info("Processing prelaunch attestation")
-		connection_id := ""
 		for i := range config.Devices {
 			if reflect.TypeOf(config.Devices[i]).String() == "qemu.Object" {
 				if config.Devices[i].(govmmQemu.Object).Type == govmmQemu.SEVGuest {
 					dev := config.Devices[i].(govmmQemu.Object)
-					connection_id = dev.DeviceID
+					launch_id = dev.DeviceID
 					break
 				}
 			}
@@ -367,20 +405,46 @@ func (q *qemuArchBase) prelaunchAttestation(ctx context.Context, qmp *govmmQemu.
 		if err != nil {
 			return err
 		}
-		// Pass launch measurement to GOP client, get secret bundle in return
-		// nsenter moves child process back to the host network namespace
-		cmd := exec.Command("nsenter", "-t", "1", "-n", "--", sevGuestOwnerProxyClient, "GetSecret", "-c", connection_id, "-i", keyset, "-m", string(launch_measure.Measurement), proxy, path)
-		out, err := cmd.CombinedOutput()
-		cmd.Wait()
+
+		// gRPC connection
+		conn, err := grpc.Dial(proxy, grpc.WithTransportCredentials(insecure.NewCredentials()))
 		if err != nil {
-			logger.Error("GetSecret FAILED: ", err, string(out))
-			return err
+		   log.Fatalf("did not connect: %v", err)
 		}
-		out_string := strings.TrimSuffix(string(out), "\n")
-		gop_result := strings.Split(out_string, ",")
-		logger.Info("Received secret bundle from guest owner")
-		secret_header := gop_result[0]
-		secret := gop_result[1]
+
+		client := pb.NewKeyBrokerServiceClient(conn)
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+
+		request_details := pb.RequestDetails {
+		    Guid: "3940238", // hardcoded secret guid 
+		    Format: "JSON",
+		    SecretType: "Bundle",
+		    Id: keyset,
+		}
+
+		var secrets []*pb.RequestDetails
+		secrets = append(secrets,&request_details)
+
+		request := pb.SecretRequest{
+		    LaunchMeasurement: launch_measure.Measurement,
+		    LaunchId: launch_id, // stored from bundle request
+		    Policy: 0, // Stored from startup
+		    ApiMajor: 0, // Parsed from SEV Info
+		    ApiMinor: 0,
+		    BuildId: 0,
+		    FwDigest: "placeholder", // we gotta calculate this
+		    LaunchDescription: "shim launch",
+		    SecretRequests: secrets,
+		}
+		secret_response, err := client.GetSecret(ctx, &request)
+		if err != nil {
+		   log.Fatalf("did not connect: %v", err)
+		}
+
+
+		secret_header := secret_response.LaunchSecretHeader
+		secret := secret_response.LaunchSecretData
 
 		// Inject secret into VM
 		if err := qmp.ExecuteSEVInjectLaunchSecret(ctx, secret_header, secret); err != nil {

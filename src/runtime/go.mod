@@ -27,6 +27,7 @@ require (
 	github.com/go-openapi/validate v0.18.0
 	github.com/godbus/dbus/v5 v5.0.4
 	github.com/gogo/protobuf v1.3.2
+	github.com/golang/protobuf v1.5.2 // indirect
 	github.com/hashicorp/go-multierror v1.1.1
 	github.com/intel-go/cpuid v0.0.0-20210602155658-5747e5cec0d9
 	github.com/mdlayher/vsock v1.1.0
@@ -53,6 +54,7 @@ require (
 	golang.org/x/oauth2 v0.0.0-20210819190943-2bc19b11175f
 	golang.org/x/sys v0.0.0-20220204135822-1c1b9b1eba6a
 	google.golang.org/grpc v1.43.0
+	google.golang.org/protobuf v1.28.0 // indirect
 	k8s.io/apimachinery v0.22.5
 	k8s.io/cri-api v0.23.1
 )

@@ -804,6 +804,18 @@ func (q *qemu) setupVirtioMem(ctx context.Context) error {
 	return err
 }
 
+// guest must be paused. this will continue guest via qmp
+func (q *qemu) AttestVM(ctx context.Context) error {
+    if err := q.qmpSetup(); err != nil {
+        return err
+    }
+    guest_filepath := filepath.Join(q.config.VMStorePath, q.id)
+    if err := q.arch.prelaunchAttestation(q.qmpMonitorCh.ctx, q.qmpMonitorCh.qmp, q.qemuConfig, guest_filepath, q.config.GuestAttestationProxy, q.config.GuestAttestationKeyset); err != nil {
+        return err
+    }
+    return nil
+}
+
 // startSandbox will start the Sandbox's VM.
 func (q *qemu) StartVM(ctx context.Context, timeout int) error {
 	span, ctx := katatrace.Trace(ctx, q.Logger(), "StartVM", qemuTracingTags, map[string]string{"sandbox_id": q.id})
@@ -893,15 +905,6 @@ func (q *qemu) StartVM(ctx context.Context, timeout int) error {
 		return err
 	}
 
-	if q.config.ConfidentialGuest && q.config.GuestAttestation {
-		if err = q.qmpSetup(); err != nil {
-			return err
-		}
-		guest_filepath := filepath.Join(q.config.VMStorePath, q.id)
-		if err := q.arch.prelaunchAttestation(q.qmpMonitorCh.ctx, q.qmpMonitorCh.qmp, q.qemuConfig, guest_filepath, q.config.GuestAttestationProxy, q.config.GuestAttestationKeyset); err != nil {
-			return err
-		}
-	}
 
 	if q.config.BootFromTemplate {
 		if err = q.bootFromTemplate(); err != nil {
