@@ -547,6 +547,8 @@ func (q *qemuArchBase) prelaunchAttestation(ctx context.Context,
 		}
 		// Pull the launch measurement from VM
 		launch_measure, err := qmp.ExecuteQuerySEVLaunchMeasure(ctx)
+		qemu_sev_info, err := qmp.ExecuteQuerySEV(ctx)
+
 		if err != nil {
 			return err
 		}
@@ -582,9 +584,9 @@ func (q *qemuArchBase) prelaunchAttestation(ctx context.Context,
 		    LaunchMeasurement: launch_measure.Measurement,
 		    LaunchId: launch_id, // stored from bundle request
 		    Policy: 0, // Stored from startup
-		    ApiMajor: 0, // Parsed from SEV Info
-		    ApiMinor: 23,
-		    BuildId: 14,
+		    ApiMajor: qemu_sev_info.APIMinor, // from qemu.SEVInfo
+		    ApiMinor: qemu_sev_info.APIMajor,
+		    BuildId: qemu_sev_info.BuildId,
 		    FwDigest: launchDigestBase64,
 		    LaunchDescription: "shim launch",
 		    SecretRequests: secrets,

@@ -259,10 +259,13 @@ type StatusInfo struct {
 
 // SEVInfo represents the SEV guest inforation
 type SEVInfo struct {
-	APIMajor string `json:"api-major"`
-	APIMinor string `json:"api-minor"`
-	BuildId  string `json:"build-id"`
-	Policy   string `json:"policy"`
+	Enabled	 bool  `json:"enabled"`
+	APIMajor uint32 `json:"api-major"`
+	APIMinor uint32 `json:"api-minor"`
+	BuildId  uint32 `json:"build-id"`
+	Policy   uint32 `json:"policy"`
+	State    string `json:"state"`
+	Handle   uint32 `json:"handle"`
 }
 
 // SEVLaunchMeasurement represents the SEV prelaunch measurement
@@ -1712,13 +1715,11 @@ func (q *QMP) ExecuteQuerySEVLaunchMeasure(ctx context.Context) (SEVLaunchMeasur
 		return SEVLaunchMeasurement{}, fmt.Errorf("unable to convert launch measurement: %v", err)
 	}
 
-	// TODO: base64.b64decode(measurement)
 	return measurement, nil
 }
 
 // ExecuteSEVInjectLaunchSecret injects launch secret bundle into SEV guest
 func (q *QMP) ExecuteSEVInjectLaunchSecret(ctx context.Context, packet_hdr string, secret string) error {
-	// TODO: 'secret': base64.b64encode(encrypted_secret).decode()
 	args := map[string]interface{}{
 		"packet-header": packet_hdr,
 		"secret":        secret,
