@@ -156,7 +156,7 @@ type qemuArch interface {
 	setupGuestAttestation(ctx context.Context, config govmmQemu.Config, path string, proxy string) (govmmQemu.Config, error)
 
 	// wait for prelaunch attestation to complete
-	prelaunchAttestation(ctx context.Context, qmp *govmmQemu.QMP, config govmmQemu.Config, path string, proxy string, keyset string) error
+	prelaunchAttestation(ctx context.Context, qmp *govmmQemu.QMP, config govmmQemu.Config, path string, proxy string, keyset string, kernelPath string, initrdPath string, fwPath string, kernelParameters string) error
 }
 
 type qemuArchBase struct {

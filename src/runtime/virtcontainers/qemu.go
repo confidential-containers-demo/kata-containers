@@ -809,10 +809,40 @@ func (q *qemu) AttestVM(ctx context.Context) error {
     if err := q.qmpSetup(); err != nil {
         return err
     }
+    kernelPath, err := q.config.KernelAssetPath()
+    if err != nil {
+      return err
+    }
+
+    initrdPath, err := q.config.InitrdAssetPath()
+    if err != nil {
+      return err
+    }
+
+    firmwarePath, err := q.config.FirmwareAssetPath()
+    if err != nil {
+      return err
+    }
+
+    kernelParameters := q.kernelParameters()
+
     guest_filepath := filepath.Join(q.config.VMStorePath, q.id)
-    if err := q.arch.prelaunchAttestation(q.qmpMonitorCh.ctx, q.qmpMonitorCh.qmp, q.qemuConfig, guest_filepath, q.config.GuestAttestationProxy, q.config.GuestAttestationKeyset); err != nil {
+
+    if err := q.arch.prelaunchAttestation(
+      q.qmpMonitorCh.ctx,
+      q.qmpMonitorCh.qmp, 
+      q.qemuConfig, 
+      guest_filepath, 
+      q.config.GuestAttestationProxy, 
+      q.config.GuestAttestationKeyset,
+      kernelPath,
+      initrdPath,
+      firmwarePath,
+      kernelParameters); 
+      err != nil {
         return err
     }
+
     return nil
 }
 

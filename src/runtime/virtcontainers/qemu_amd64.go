@@ -521,7 +521,16 @@ func calculateSevLaunchDigest(firmwarePath, kernelPath, initrdPath, cmdline stri
 }
 
 // wait for prelaunch attestation to complete
-func (q *qemuArchBase) prelaunchAttestation(ctx context.Context, qmp *govmmQemu.QMP, config govmmQemu.Config, path string, proxy string, keyset string) error {
+func (q *qemuArchBase) prelaunchAttestation(ctx context.Context,
+  qmp *govmmQemu.QMP,
+  config govmmQemu.Config,
+  path string,
+  proxy string,
+  keyset string,
+  kernelPath string,
+  initrdPath string, 
+  fwPath string, 
+  kernelParameters string) error {
   	launch_id := ""
 	switch q.protection {
 	case sevProtection:
@@ -549,20 +558,21 @@ func (q *qemuArchBase) prelaunchAttestation(ctx context.Context, qmp *govmmQemu.
 		}
 
 		client := pb.NewKeyBrokerServiceClient(conn)
-		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second * 10)
 		defer cancel()
 
 		request_details := pb.RequestDetails {
-		    Guid: "3940238", // hardcoded secret guid 
+		    Guid: "0a46e24d-478c-4eb1-8696-113eeec3aa99", // hardcoded secret guid 
 		    Format: "JSON",
-		    SecretType: "Bundle",
+		    SecretType: "bundle",
 		    Id: keyset,
 		}
 
 		var secrets []*pb.RequestDetails
 		secrets = append(secrets,&request_details)
 
-		launchDigest, err := calculateSevLaunchDigest("/path/to/ovmf", "/path/to/kernel", "/path/to/initrd", "cmdline loglevel=7") // TODO need actual values
+
+		launchDigest, err := calculateSevLaunchDigest(fwPath, kernelPath, initrdPath, kernelParameters)
 		if err != nil {
 		   log.Fatalf("can't calculate SEV launch digest: %v", err)
 		}
@@ -573,17 +583,20 @@ func (q *qemuArchBase) prelaunchAttestation(ctx context.Context, qmp *govmmQemu.
 		    LaunchId: launch_id, // stored from bundle request
 		    Policy: 0, // Stored from startup
 		    ApiMajor: 0, // Parsed from SEV Info
-		    ApiMinor: 0,
-		    BuildId: 0,
+		    ApiMinor: 23,
+		    BuildId: 14,
 		    FwDigest: launchDigestBase64,
 		    LaunchDescription: "shim launch",
 		    SecretRequests: secrets,
 		}
+    logger.Info("requesting secrets")
 		secret_response, err := client.GetSecret(ctx, &request)
 		if err != nil {
 		   log.Fatalf("did not connect: %v", err)
 		}
 
+
+		logger.Info("secrets acquired")
 
 		secret_header := secret_response.LaunchSecretHeader
 		secret := secret_response.LaunchSecretData
@@ -592,6 +605,7 @@ func (q *qemuArchBase) prelaunchAttestation(ctx context.Context, qmp *govmmQemu.
 		if err := qmp.ExecuteSEVInjectLaunchSecret(ctx, secret_header, secret); err != nil {
 			return err
 		}
+		logger.Info("secrets injected")
 		// Continue the VM
 		return qmp.ExecuteCont(ctx)
 	default:
