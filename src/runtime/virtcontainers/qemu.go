@@ -652,19 +652,26 @@ func (q *qemu) CreateVM(ctx context.Context, id string, network Network, hypervi
 		PidFile:     filepath.Join(q.config.VMStorePath, q.id, "pid"),
 	}
 	if(q.arch.guestProtection() == sevProtection){
-		qemuConfig.Devices, qemuConfig.Bios, err = q.arch.appendSEVObject(qemuConfig.Devices, firmwarePath, firmwareVolumePath, q.config.SEVGuestPolicy)
-		if err != nil {
-			return err
-		}
+    attestationId := ""
+
 		if q.config.GuestAttestation {
-			guest_filepath := filepath.Join(q.config.VMStorePath, q.id)
-			qemuConfig, err = q.arch.setupGuestAttestation(ctx, qemuConfig, guest_filepath, q.config.GuestAttestationProxy, q.config.SEVGuestPolicy)
+      attestationId, err = q.arch.setupGuestAttestation(ctx, q.config.GuestAttestationProxy, q.config.SEVGuestPolicy)
 			if err != nil {
 				return err
 			}
+
+      // Guest must be stopped to inject launch secrets.
+      qemuConfig.Knobs.Stopped = true
+      q.arch.setSEVAttestationId(attestationId)
 		} else {
 			q.Logger().Infof("SEV attestation skipped: %d", q.config.GuestAttestation)
 		}
+
+    qemuConfig.Devices, qemuConfig.Bios, err = q.arch.appendSEVObject(qemuConfig.Devices, firmwarePath, firmwareVolumePath, q.config.SEVGuestPolicy, attestationId)
+		if err != nil {
+			return err
+		}
+
 	}else{
 		qemuConfig.Devices, qemuConfig.Bios, err = q.arch.appendProtectionDevice(qemuConfig.Devices, firmwarePath, firmwareVolumePath)
 		if err != nil {
@@ -830,17 +837,15 @@ func (q *qemu) AttestVM(ctx context.Context) error {
     }
 
     kernelParameters := q.kernelParameters()
-
-    guest_filepath := filepath.Join(q.config.VMStorePath, q.id)
+    attestationId := q.arch.getSEVAttestationId()
 
     if err := q.arch.prelaunchAttestation(
       q.qmpMonitorCh.ctx,
       q.qmpMonitorCh.qmp,
-      q.qemuConfig,
-      guest_filepath,
       q.config.GuestAttestationProxy,
       q.config.SEVGuestPolicy,
       q.config.GuestAttestationKeyset,
+      attestationId,
       kernelPath,
       initrdPath,
       firmwarePath,

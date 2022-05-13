@@ -15,7 +15,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"reflect"
 	"time"
 	"log"
 	b64 "encoding/base64"
@@ -302,92 +301,91 @@ func (q *qemuAmd64) appendProtectionDevice(devices []govmmQemu.Device, firmware,
 	}
 }
 
-// append protection device
-func (q *qemuAmd64) appendSEVObject(devices []govmmQemu.Device, firmware, firmwareVolume string, policy uint32) ([]govmmQemu.Device, string, error) {
-	return append(devices,
-		govmmQemu.Object{
-			Type:            govmmQemu.SEVGuest,
-			ID:              "sev",
-			Debug:           false,
-			File:            firmware,
-			CBitPos:         cpuid.AMDMemEncrypt.CBitPosition,
-			ReducedPhysBits: cpuid.AMDMemEncrypt.PhysAddrReduction,
-			SevPolicy:	policy,
-		}), "", nil
+// Add the SEV Object parameters for sev guest protection and conditionally
+// for SEV pre-attestation
+func (q *qemuAmd64) appendSEVObject(devices []govmmQemu.Device, firmware, firmwareVolume string, policy uint32, launch_id string) ([]govmmQemu.Device, string, error) {
+  launch_data_path := "/opt/sev/" + launch_id
+
+  godh_path := launch_data_path + "/godh.bin"
+  session_file_path := launch_data_path + "/session_file.bin"
+
+  // If attestation is enabled, add the certfile and session file 
+  // and the kernel hashes flag.
+  if len(launch_id) > 0 {
+    return append(devices,
+      govmmQemu.Object{
+        Type:            govmmQemu.SEVGuest,
+        ID:              "sev",
+        Debug:           false,
+        File:            firmware,
+        CBitPos:         cpuid.AMDMemEncrypt.CBitPosition,
+        ReducedPhysBits: cpuid.AMDMemEncrypt.PhysAddrReduction,
+        SevPolicy:	policy,
+        CertFilePath: godh_path,
+        SessionFilePath: session_file_path,
+        KernelHashes: true,
+      }), "", nil
+    } else {
+      return append(devices,
+        govmmQemu.Object{
+          Type:            govmmQemu.SEVGuest,
+          ID:              "sev",
+          Debug:           false,
+          File:            firmware,
+          CBitPos:         cpuid.AMDMemEncrypt.CBitPosition,
+          ReducedPhysBits: cpuid.AMDMemEncrypt.PhysAddrReduction,
+          SevPolicy:	policy,
+        }), "", nil
+    }
 }
 
 // setup prelaunch attestation
-func (q *qemuArchBase) setupGuestAttestation(ctx context.Context, config govmmQemu.Config, path string, proxy string, policy uint32) (govmmQemu.Config, error) {
-	switch q.protection {
-	case sevProtection:
-		logger := virtLog.WithField("subsystem", "SEV attestation")
-		logger.Info("Set up prelaunch attestation")
+func (q *qemuArchBase) setupGuestAttestation(ctx context.Context,
+  proxy string,
+  policy uint32) (string, error) {
 
-		cert_chain_path := "/opt/sev/cert_chain.cert"
-		cert_chain_bin, err := os.ReadFile(cert_chain_path)
-		cert_chain := b64.StdEncoding.EncodeToString([]byte(cert_chain_bin))
+  logger := virtLog.WithField("subsystem", "SEV attestation")
+  logger.Info("Set up prelaunch attestation")
 
-		if err != nil {
-		   log.Fatalf("cert chain not found: %v", err);
-		}
+  cert_chain_path := "/opt/sev/cert_chain.cert"
+  cert_chain_bin, err := os.ReadFile(cert_chain_path)
+  cert_chain := b64.StdEncoding.EncodeToString([]byte(cert_chain_bin))
 
-		// gRPC connection
-		conn, err := grpc.Dial(proxy, grpc.WithTransportCredentials(insecure.NewCredentials()))
-		if err != nil {
-		   log.Fatalf("did not connect: %v", err)
-		}
+  if err != nil {
+      log.Fatalf("cert chain not found: %v", err);
+  }
 
-		client := pb.NewKeyBrokerServiceClient(conn)
-		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-		defer cancel()
+  // gRPC connection
+  conn, err := grpc.Dial(proxy, grpc.WithTransportCredentials(insecure.NewCredentials()))
+  if err != nil {
+      log.Fatalf("did not connect: %v", err)
+  }
 
-		request := pb.BundleRequest{
-			CertificateChain: string(cert_chain),
-			Policy: policy,
-		}
-		bundle_response, err := client.GetBundle(ctx, &request)
-		if err != nil {
-		   log.Fatalf("did not connect: %v", err)
-		}
+  client := pb.NewKeyBrokerServiceClient(conn)
+  ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+  defer cancel()
 
-		launch_id := bundle_response.LaunchId
-		launch_data_path := "/opt/sev/" + launch_id
-		_ = os.Mkdir(launch_data_path, os.ModePerm)
+  request := pb.BundleRequest{
+    CertificateChain: string(cert_chain),
+    Policy: policy,
+  }
+  bundle_response, err := client.GetBundle(ctx, &request)
+  if err != nil {
+      log.Fatalf("did not connect: %v", err)
+  }
 
-		godh_path := launch_data_path + "/godh.bin"
-		session_file_path := launch_data_path + "/session_file.bin"
+  launch_id := bundle_response.LaunchId
+  launch_data_path := "/opt/sev/" + launch_id
+  _ = os.Mkdir(launch_data_path, os.ModePerm)
 
-		//godh_bytes, _ := b64.StdEncoding.DecodeString(bundle_response.GuestOwnerPublicKey)
-		//session_file_bytes, _ := b64.StdEncoding.DecodeString(bundle_response.LaunchBlob)
+  godh_path := launch_data_path + "/godh.bin"
+  session_file_path := launch_data_path + "/session_file.bin"
 
-		_ = os.WriteFile(godh_path, []byte(bundle_response.GuestOwnerPublicKey), 0777)
-		_ = os.WriteFile(session_file_path, []byte(bundle_response.LaunchBlob), 0777)
 
-		// TODO: do something with the response. 
-		// GODH - pass to qemu 
-		// LaunchBlog - pass to qemu
+  _ = os.WriteFile(godh_path, []byte(bundle_response.GuestOwnerPublicKey), 0777)
+  _ = os.WriteFile(session_file_path, []byte(bundle_response.LaunchBlob), 0777)
 
-		// start VM in stalled state
-		config.Knobs.Stopped = true
-
-		// Place launch args into qemuConfig.Devices struct
-		for i := range config.Devices {
-			if reflect.TypeOf(config.Devices[i]).String() == "qemu.Object" {
-				if config.Devices[i].(govmmQemu.Object).Type == govmmQemu.SEVGuest {
-					dev := config.Devices[i].(govmmQemu.Object)
-					dev.CertFilePath =  godh_path
-					dev.SessionFilePath = session_file_path
-					dev.DeviceID = launch_id
-					dev.KernelHashes = true
-					config.Devices[i] = dev
-					break
-				}
-			}
-		}
-		return config, nil
-	default:
-		return config, nil
-	}
+  return launch_id, nil
 }
 
 
@@ -525,29 +523,20 @@ func calculateSevLaunchDigest(firmwarePath, kernelPath, initrdPath, cmdline stri
 // wait for prelaunch attestation to complete
 func (q *qemuArchBase) prelaunchAttestation(ctx context.Context,
   qmp *govmmQemu.QMP,
-  config govmmQemu.Config,
-  path string,
   proxy string,
   policy uint32,
   keyset string,
+  launch_id string,
   kernelPath string,
   initrdPath string, 
   fwPath string, 
   kernelParameters string) error {
-  	launch_id := ""
+
 	switch q.protection {
 	case sevProtection:
 		logger := virtLog.WithField("subsystem", "SEV attestation")
 		logger.Info("Processing prelaunch attestation")
-		for i := range config.Devices {
-			if reflect.TypeOf(config.Devices[i]).String() == "qemu.Object" {
-				if config.Devices[i].(govmmQemu.Object).Type == govmmQemu.SEVGuest {
-					dev := config.Devices[i].(govmmQemu.Object)
-					launch_id = dev.DeviceID
-					break
-				}
-			}
-		}
+
 		// Pull the launch measurement from VM
 		launch_measure, err := qmp.ExecuteQuerySEVLaunchMeasure(ctx)
 		qemu_sev_info, err := qmp.ExecuteQuerySEV(ctx)
@@ -587,8 +576,8 @@ func (q *qemuArchBase) prelaunchAttestation(ctx context.Context,
 		    LaunchMeasurement: launch_measure.Measurement,
 		    LaunchId: launch_id, // stored from bundle request
 		    Policy: policy, // Stored from startup
-		    ApiMajor: qemu_sev_info.APIMinor, // from qemu.SEVInfo
-		    ApiMinor: qemu_sev_info.APIMajor,
+		    ApiMajor: qemu_sev_info.APIMajor, // from qemu.SEVInfo
+		    ApiMinor: qemu_sev_info.APIMinor,
 		    BuildId: qemu_sev_info.BuildId,
 		    FwDigest: launchDigestBase64,
 		    LaunchDescription: "shim launch",
