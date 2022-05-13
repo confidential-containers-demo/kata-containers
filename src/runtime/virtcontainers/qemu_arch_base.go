@@ -43,6 +43,9 @@ type qemuArch interface {
 	// machine returns the machine type
 	machine() govmmQemu.Machine
 
+	// protection returns guest protection type 
+	guestProtection() guestProtection
+
 	// qemuPath returns the path to the QEMU binary
 	qemuPath() string
 
@@ -152,11 +155,13 @@ type qemuArch interface {
 	// be used with the -bios option, ommit -bios option if the path is empty.
 	appendProtectionDevice(devices []govmmQemu.Device, firmware, firmwareVolume string) ([]govmmQemu.Device, string, error)
 
+	appendSEVObject(devices []govmmQemu.Device, firmware, firmwareVolume string, policy uint32) ([]govmmQemu.Device, string, error)
+
 	// setup guest attestation
-	setupGuestAttestation(ctx context.Context, config govmmQemu.Config, path string, proxy string) (govmmQemu.Config, error)
+	setupGuestAttestation(ctx context.Context, config govmmQemu.Config, path string, proxy string, policy uint32) (govmmQemu.Config, error)
 
 	// wait for prelaunch attestation to complete
-	prelaunchAttestation(ctx context.Context, qmp *govmmQemu.QMP, config govmmQemu.Config, path string, proxy string, keyset string, kernelPath string, initrdPath string, fwPath string, kernelParameters string) error
+	prelaunchAttestation(ctx context.Context, qmp *govmmQemu.QMP, config govmmQemu.Config, path string, proxy string, policy uint32,  keyset string, kernelPath string, initrdPath string, fwPath string, kernelParameters string) error
 }
 
 type qemuArchBase struct {
@@ -263,6 +268,10 @@ func (q *qemuArchBase) disableVhostNet() {
 
 func (q *qemuArchBase) machine() govmmQemu.Machine {
 	return q.qemuMachine
+}
+
+func (q *qemuArchBase) guestProtection() guestProtection {
+	return q.protection
 }
 
 func (q *qemuArchBase) qemuPath() string {

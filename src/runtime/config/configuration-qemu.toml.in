@@ -43,6 +43,9 @@ machine_type = "@MACHINETYPE@"
 #
 # Keyset ID for injected secrets 
 #guest_attestation_keyset="KEYSET-1"
+#
+# SEV guest policy 
+#sev_guest_policy=0
 
 # Enable running QEMU VMM as a non-root user.
 # By default QEMU VMM run as root. When this is set to true, QEMU VMM process runs as

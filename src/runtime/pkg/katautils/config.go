@@ -141,6 +141,7 @@ type hypervisor struct {
 	GuestAttestation        bool     `toml:"guest_attestation"`
 	GuestAttestationProxy   string   `toml:"guest_attestation_proxy"`
 	GuestAttestationKeyset  string   `toml:"guest_attestation_keyset"`
+	SEVGuestPolicy		uint32   `toml:"sev_guest_policy"`
 }
 
 type runtime struct {
@@ -717,6 +718,7 @@ func newQemuHypervisorConfig(h hypervisor) (vc.HypervisorConfig, error) {
 		GuestAttestation:        h.GuestAttestation,
 		GuestAttestationProxy:   h.GuestAttestationProxy,
 		GuestAttestationKeyset:  h.GuestAttestationKeyset,
+		SEVGuestPolicy:		 h.SEVGuestPolicy,
 	}, nil
 }
 
@@ -1069,6 +1071,7 @@ func GetDefaultHypervisorConfig() vc.HypervisorConfig {
 		GuestAttestation:        defaultGuestAttestation,
 		GuestAttestationProxy:   defaultGuestAttestationProxy,
 		GuestAttestationKeyset:  defaultGuestAttestationKeyset,
+		SEVGuestPolicy:		 defaultSEVGuestPolicy,
 	}
 }
 

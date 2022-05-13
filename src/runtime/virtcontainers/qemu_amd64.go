@@ -294,16 +294,6 @@ func (q *qemuAmd64) appendProtectionDevice(devices []govmmQemu.Device, firmware,
 				File:           firmware,
 				FirmwareVolume: firmwareVolume,
 			}), "", nil
-	case sevProtection:
-		return append(devices,
-			govmmQemu.Object{
-				Type:            govmmQemu.SEVGuest,
-				ID:              "sev",
-				Debug:           false,
-				File:            firmware,
-				CBitPos:         cpuid.AMDMemEncrypt.CBitPosition,
-				ReducedPhysBits: cpuid.AMDMemEncrypt.PhysAddrReduction,
-			}), "", nil
 	case noneProtection:
 		return devices, firmware, nil
 
@@ -312,8 +302,22 @@ func (q *qemuAmd64) appendProtectionDevice(devices []govmmQemu.Device, firmware,
 	}
 }
 
+// append protection device
+func (q *qemuAmd64) appendSEVObject(devices []govmmQemu.Device, firmware, firmwareVolume string, policy uint32) ([]govmmQemu.Device, string, error) {
+	return append(devices,
+		govmmQemu.Object{
+			Type:            govmmQemu.SEVGuest,
+			ID:              "sev",
+			Debug:           false,
+			File:            firmware,
+			CBitPos:         cpuid.AMDMemEncrypt.CBitPosition,
+			ReducedPhysBits: cpuid.AMDMemEncrypt.PhysAddrReduction,
+			SevPolicy:	policy,
+		}), "", nil
+}
+
 // setup prelaunch attestation
-func (q *qemuArchBase) setupGuestAttestation(ctx context.Context, config govmmQemu.Config, path string, proxy string) (govmmQemu.Config, error) {
+func (q *qemuArchBase) setupGuestAttestation(ctx context.Context, config govmmQemu.Config, path string, proxy string, policy uint32) (govmmQemu.Config, error) {
 	switch q.protection {
 	case sevProtection:
 		logger := virtLog.WithField("subsystem", "SEV attestation")
@@ -337,11 +341,9 @@ func (q *qemuArchBase) setupGuestAttestation(ctx context.Context, config govmmQe
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
 
-		// TODO: get the cert chain from somewhere
-		//       get the policy that we used to start the VM
 		request := pb.BundleRequest{
 			CertificateChain: string(cert_chain),
-			Policy: 0,
+			Policy: policy,
 		}
 		bundle_response, err := client.GetBundle(ctx, &request)
 		if err != nil {
@@ -526,6 +528,7 @@ func (q *qemuArchBase) prelaunchAttestation(ctx context.Context,
   config govmmQemu.Config,
   path string,
   proxy string,
+  policy uint32,
   keyset string,
   kernelPath string,
   initrdPath string, 
@@ -583,7 +586,7 @@ func (q *qemuArchBase) prelaunchAttestation(ctx context.Context,
 		request := pb.SecretRequest{
 		    LaunchMeasurement: launch_measure.Measurement,
 		    LaunchId: launch_id, // stored from bundle request
-		    Policy: 0, // Stored from startup
+		    Policy: policy, // Stored from startup
 		    ApiMajor: qemu_sev_info.APIMinor, // from qemu.SEVInfo
 		    ApiMinor: qemu_sev_info.APIMajor,
 		    BuildId: qemu_sev_info.BuildId,

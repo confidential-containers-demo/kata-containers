@@ -487,6 +487,9 @@ type HypervisorConfig struct {
 	// Keyset ID for post-attestation secret injection
 	GuestAttestationKeyset string
 
+	// Policy for SEV guests
+	SEVGuestPolicy uint32
+
 	// BootToBeTemplate used to indicate if the VM is created to be a template VM
 	BootToBeTemplate bool
 

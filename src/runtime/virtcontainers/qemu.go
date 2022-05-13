@@ -651,20 +651,25 @@ func (q *qemu) CreateVM(ctx context.Context, id string, network Network, hypervi
 		PFlash:      pflash,
 		PidFile:     filepath.Join(q.config.VMStorePath, q.id, "pid"),
 	}
-
-	qemuConfig.Devices, qemuConfig.Bios, err = q.arch.appendProtectionDevice(qemuConfig.Devices, firmwarePath, firmwareVolumePath)
-	if err != nil {
-		return err
-	}
-
-	if q.config.GuestAttestation {
-		guest_filepath := filepath.Join(q.config.VMStorePath, q.id)
-		qemuConfig, err = q.arch.setupGuestAttestation(ctx, qemuConfig, guest_filepath, q.config.GuestAttestationProxy)
+	if(q.arch.guestProtection() == sevProtection){
+		qemuConfig.Devices, qemuConfig.Bios, err = q.arch.appendSEVObject(qemuConfig.Devices, firmwarePath, firmwareVolumePath, q.config.SEVGuestPolicy)
 		if err != nil {
 			return err
 		}
-	} else {
-		q.Logger().Infof("SEV attestation skipped: %d", q.config.GuestAttestation)
+		if q.config.GuestAttestation {
+			guest_filepath := filepath.Join(q.config.VMStorePath, q.id)
+			qemuConfig, err = q.arch.setupGuestAttestation(ctx, qemuConfig, guest_filepath, q.config.GuestAttestationProxy, q.config.SEVGuestPolicy)
+			if err != nil {
+				return err
+			}
+		} else {
+			q.Logger().Infof("SEV attestation skipped: %d", q.config.GuestAttestation)
+		}
+	}else{
+		qemuConfig.Devices, qemuConfig.Bios, err = q.arch.appendProtectionDevice(qemuConfig.Devices, firmwarePath, firmwareVolumePath)
+		if err != nil {
+			return err
+		}
 	}
 
 	if ioThread != nil {
@@ -830,15 +835,16 @@ func (q *qemu) AttestVM(ctx context.Context) error {
 
     if err := q.arch.prelaunchAttestation(
       q.qmpMonitorCh.ctx,
-      q.qmpMonitorCh.qmp, 
-      q.qemuConfig, 
-      guest_filepath, 
-      q.config.GuestAttestationProxy, 
+      q.qmpMonitorCh.qmp,
+      q.qemuConfig,
+      guest_filepath,
+      q.config.GuestAttestationProxy,
+      q.config.SEVGuestPolicy,
       q.config.GuestAttestationKeyset,
       kernelPath,
       initrdPath,
       firmwarePath,
-      kernelParameters); 
+      kernelParameters);
       err != nil {
         return err
     }
