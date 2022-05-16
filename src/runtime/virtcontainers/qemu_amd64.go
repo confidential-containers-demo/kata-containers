@@ -12,17 +12,17 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
-	"fmt"
-	"io"
-	"os"
-	"time"
-	"log"
 	b64 "encoding/base64"
 	"encoding/binary"
+	"fmt"
+	"io"
+	"log"
+	"os"
+	"time"
 
+	pb "github.com/kata-containers/kata-containers/src/runtime/protocols/simple-kbs"
 	"github.com/kata-containers/kata-containers/src/runtime/virtcontainers/types"
 	"github.com/sirupsen/logrus"
-	pb "github.com/kata-containers/kata-containers/src/runtime/protocols/simple-kbs"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
@@ -50,17 +50,11 @@ const (
 
 	qmpMigrationWaitTimeout = 5 * time.Second
 
-	// Guest Owner Proxy Client
-	// TODO: relocate to ./virtcontainers/hypervisor_linux_amd64.go ? 
-	// gop-client is a *temporary* component of the confidential containers CCv0 demo.
-	//
-	// The guest owner proxy (gop-client.py) acts as the local client for
-	// a remote Guest Owner server.  The local client fowards encrypted
-	// messages between the SEV hardware and the external guest owner.
-	//
-	// Source: https://github.com/confidential-containers-demo/scripts/tree/main/guest-owner-proxy
-	//
-	sevGuestOwnerProxyClient = "/opt/sev/guest-owner-proxy/gop-client.py"
+	sevAttestationGrpcTimeout     = 10 * time.Second
+	sevAttestationWorkingDir      = "/opt/sev/"
+	sevAttestationCertChainName   = "cert_chain.cert"
+	sevAttestationGodhName        = "godh.bin"
+	sevAttestationSessionFileName = "session_file.bin"
 )
 
 var qemuPaths = map[string]string{
@@ -303,91 +297,87 @@ func (q *qemuAmd64) appendProtectionDevice(devices []govmmQemu.Device, firmware,
 
 // Add the SEV Object parameters for sev guest protection and conditionally
 // for SEV pre-attestation
-func (q *qemuAmd64) appendSEVObject(devices []govmmQemu.Device, firmware, firmwareVolume string, policy uint32, launch_id string) ([]govmmQemu.Device, string, error) {
-  launch_data_path := "/opt/sev/" + launch_id
+func (q *qemuAmd64) appendSEVObject(devices []govmmQemu.Device, firmware, firmwareVolume string, policy uint32, attestationId string) ([]govmmQemu.Device, string, error) {
+	attestationDataPath := sevAttestationWorkingDir + attestationId
 
-  godh_path := launch_data_path + "/godh.bin"
-  session_file_path := launch_data_path + "/session_file.bin"
+	godhPath := attestationDataPath + sevAttestationGodhName
+	sessionFilePath := attestationDataPath + sevAttestationSessionFileName
 
-  // If attestation is enabled, add the certfile and session file 
-  // and the kernel hashes flag.
-  if len(launch_id) > 0 {
-    return append(devices,
-      govmmQemu.Object{
-        Type:            govmmQemu.SEVGuest,
-        ID:              "sev",
-        Debug:           false,
-        File:            firmware,
-        CBitPos:         cpuid.AMDMemEncrypt.CBitPosition,
-        ReducedPhysBits: cpuid.AMDMemEncrypt.PhysAddrReduction,
-        SevPolicy:	policy,
-        CertFilePath: godh_path,
-        SessionFilePath: session_file_path,
-        KernelHashes: true,
-      }), "", nil
-    } else {
-      return append(devices,
-        govmmQemu.Object{
-          Type:            govmmQemu.SEVGuest,
-          ID:              "sev",
-          Debug:           false,
-          File:            firmware,
-          CBitPos:         cpuid.AMDMemEncrypt.CBitPosition,
-          ReducedPhysBits: cpuid.AMDMemEncrypt.PhysAddrReduction,
-          SevPolicy:	policy,
-        }), "", nil
-    }
+	// If attestation is enabled, add the certfile and session file
+	// and the kernel hashes flag.
+	if len(attestationId) > 0 {
+		return append(devices,
+			govmmQemu.Object{
+				Type:            govmmQemu.SEVGuest,
+				ID:              "sev",
+				Debug:           false,
+				File:            firmware,
+				CBitPos:         cpuid.AMDMemEncrypt.CBitPosition,
+				ReducedPhysBits: cpuid.AMDMemEncrypt.PhysAddrReduction,
+				SevPolicy:       policy,
+				CertFilePath:    godhPath,
+				SessionFilePath: sessionFilePath,
+				KernelHashes:    true,
+			}), "", nil
+	} else {
+		return append(devices,
+			govmmQemu.Object{
+				Type:            govmmQemu.SEVGuest,
+				ID:              "sev",
+				Debug:           false,
+				File:            firmware,
+				CBitPos:         cpuid.AMDMemEncrypt.CBitPosition,
+				ReducedPhysBits: cpuid.AMDMemEncrypt.PhysAddrReduction,
+				SevPolicy:       policy,
+			}), "", nil
+	}
 }
 
 // setup prelaunch attestation
-func (q *qemuArchBase) setupGuestAttestation(ctx context.Context,
-  proxy string,
-  policy uint32) (string, error) {
+func (q *qemuArchBase) setupSEVGuestAttestation(ctx context.Context,
+	proxy string,
+	policy uint32) (string, error) {
 
-  logger := virtLog.WithField("subsystem", "SEV attestation")
-  logger.Info("Set up prelaunch attestation")
+	logger := virtLog.WithField("subsystem", "SEV attestation")
+	logger.Info("Set up prelaunch attestation")
 
-  cert_chain_path := "/opt/sev/cert_chain.cert"
-  cert_chain_bin, err := os.ReadFile(cert_chain_path)
-  cert_chain := b64.StdEncoding.EncodeToString([]byte(cert_chain_bin))
+	certChainBin, err := os.ReadFile(sevAttestationWorkingDir + sevAttestationCertChainName)
+	certChain := b64.StdEncoding.EncodeToString([]byte(certChainBin))
 
-  if err != nil {
-      log.Fatalf("cert chain not found: %v", err);
-  }
+	if err != nil {
+		log.Fatalf("cert chain not found: %v", err)
+	}
 
-  // gRPC connection
-  conn, err := grpc.Dial(proxy, grpc.WithTransportCredentials(insecure.NewCredentials()))
-  if err != nil {
-      log.Fatalf("did not connect: %v", err)
-  }
+	conn, err := grpc.Dial(proxy, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		log.Fatalf("did not connect: %v", err)
+	}
 
-  client := pb.NewKeyBrokerServiceClient(conn)
-  ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-  defer cancel()
+	client := pb.NewKeyBrokerServiceClient(conn)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
 
-  request := pb.BundleRequest{
-    CertificateChain: string(cert_chain),
-    Policy: policy,
-  }
-  bundle_response, err := client.GetBundle(ctx, &request)
-  if err != nil {
-      log.Fatalf("did not connect: %v", err)
-  }
+	request := pb.BundleRequest{
+		CertificateChain: string(certChain),
+		Policy:           policy,
+	}
+	bundleResponse, err := client.GetBundle(ctx, &request)
+	if err != nil {
+		log.Fatalf("did not connect: %v", err)
+	}
 
-  launch_id := bundle_response.LaunchId
-  launch_data_path := "/opt/sev/" + launch_id
-  _ = os.Mkdir(launch_data_path, os.ModePerm)
+	attestationId := bundleResponse.LaunchId
+	attestationDataPath := sevAttestationWorkingDir + attestationId
+	_ = os.Mkdir(attestationDataPath, os.ModePerm)
 
-  godh_path := launch_data_path + "/godh.bin"
-  session_file_path := launch_data_path + "/session_file.bin"
+	godhPath := attestationDataPath + sevAttestationGodhName
+	sessionFilePath := attestationDataPath + sevAttestationSessionFileName
 
+	_ = os.WriteFile(godhPath, []byte(bundleResponse.GuestOwnerPublicKey), 0777)
+	_ = os.WriteFile(sessionFilePath, []byte(bundleResponse.LaunchBlob), 0777)
 
-  _ = os.WriteFile(godh_path, []byte(bundle_response.GuestOwnerPublicKey), 0777)
-  _ = os.WriteFile(session_file_path, []byte(bundle_response.LaunchBlob), 0777)
-
-  return launch_id, nil
+	return attestationId, nil
 }
-
 
 type guidLE [16]byte
 
@@ -521,16 +511,16 @@ func calculateSevLaunchDigest(firmwarePath, kernelPath, initrdPath, cmdline stri
 }
 
 // wait for prelaunch attestation to complete
-func (q *qemuArchBase) prelaunchAttestation(ctx context.Context,
-  qmp *govmmQemu.QMP,
-  proxy string,
-  policy uint32,
-  keyset string,
-  launch_id string,
-  kernelPath string,
-  initrdPath string, 
-  fwPath string, 
-  kernelParameters string) error {
+func (q *qemuArchBase) sevGuestAttestation(ctx context.Context,
+	qmp *govmmQemu.QMP,
+	proxy string,
+	policy uint32,
+	keyset string,
+	attestationId string,
+	kernelPath string,
+	initrdPath string,
+	fwPath string,
+	kernelParameters string) error {
 
 	switch q.protection {
 	case sevProtection:
@@ -538,8 +528,8 @@ func (q *qemuArchBase) prelaunchAttestation(ctx context.Context,
 		logger.Info("Processing prelaunch attestation")
 
 		// Pull the launch measurement from VM
-		launch_measure, err := qmp.ExecuteQuerySEVLaunchMeasure(ctx)
-		qemu_sev_info, err := qmp.ExecuteQuerySEV(ctx)
+		launchMeasure, err := qmp.ExecuteQuerySEVLaunchMeasure(ctx)
+		qemuSevInfo, err := qmp.ExecuteQuerySEV(ctx)
 
 		if err != nil {
 			return err
@@ -548,55 +538,53 @@ func (q *qemuArchBase) prelaunchAttestation(ctx context.Context,
 		// gRPC connection
 		conn, err := grpc.Dial(proxy, grpc.WithTransportCredentials(insecure.NewCredentials()))
 		if err != nil {
-		   log.Fatalf("did not connect: %v", err)
+			log.Fatalf("did not connect: %v", err)
 		}
 
 		client := pb.NewKeyBrokerServiceClient(conn)
-		ctx, cancel := context.WithTimeout(context.Background(), time.Second * 10)
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
 		defer cancel()
 
-		request_details := pb.RequestDetails {
-		    Guid: "0a46e24d-478c-4eb1-8696-113eeec3aa99", // hardcoded secret guid 
-		    Format: "JSON",
-		    SecretType: "bundle",
-		    Id: keyset,
+		requestDetails := pb.RequestDetails{
+			Guid:       "0a46e24d-478c-4eb1-8696-113eeec3aa99", // hardcoded secret guid
+			Format:     "JSON",
+			SecretType: "bundle",
+			Id:         keyset,
 		}
 
 		var secrets []*pb.RequestDetails
-		secrets = append(secrets,&request_details)
-
+		secrets = append(secrets, &requestDetails)
 
 		launchDigest, err := calculateSevLaunchDigest(fwPath, kernelPath, initrdPath, kernelParameters)
 		if err != nil {
-		   log.Fatalf("can't calculate SEV launch digest: %v", err)
+			log.Fatalf("can't calculate SEV launch digest: %v", err)
 		}
 		launchDigestBase64 := b64.StdEncoding.EncodeToString(launchDigest[:])
 
 		request := pb.SecretRequest{
-		    LaunchMeasurement: launch_measure.Measurement,
-		    LaunchId: launch_id, // stored from bundle request
-		    Policy: policy, // Stored from startup
-		    ApiMajor: qemu_sev_info.APIMajor, // from qemu.SEVInfo
-		    ApiMinor: qemu_sev_info.APIMinor,
-		    BuildId: qemu_sev_info.BuildId,
-		    FwDigest: launchDigestBase64,
-		    LaunchDescription: "shim launch",
-		    SecretRequests: secrets,
+			LaunchMeasurement: launchMeasure.Measurement,
+			LaunchId:          attestationId,        // stored from bundle request
+			Policy:            policy,               // Stored from startup
+			ApiMajor:          qemuSevInfo.APIMajor, // from qemu.SEVInfo
+			ApiMinor:          qemuSevInfo.APIMinor,
+			BuildId:           qemuSevInfo.BuildId,
+			FwDigest:          launchDigestBase64,
+			LaunchDescription: "shim launch",
+			SecretRequests:    secrets,
 		}
-    logger.Info("requesting secrets")
-		secret_response, err := client.GetSecret(ctx, &request)
+		logger.Info("requesting secrets")
+		secretResponse, err := client.GetSecret(ctx, &request)
 		if err != nil {
-		   log.Fatalf("did not connect: %v", err)
+			log.Fatalf("did not connect: %v", err)
 		}
-
 
 		logger.Info("secrets acquired")
 
-		secret_header := secret_response.LaunchSecretHeader
-		secret := secret_response.LaunchSecretData
+		secretHeader := secretResponse.LaunchSecretHeader
+		secret := secretResponse.LaunchSecretData
 
 		// Inject secret into VM
-		if err := qmp.ExecuteSEVInjectLaunchSecret(ctx, secret_header, secret); err != nil {
+		if err := qmp.ExecuteSEVInjectLaunchSecret(ctx, secretHeader, secret); err != nil {
 			return err
 		}
 		logger.Info("secrets injected")

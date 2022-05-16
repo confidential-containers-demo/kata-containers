@@ -651,28 +651,28 @@ func (q *qemu) CreateVM(ctx context.Context, id string, network Network, hypervi
 		PFlash:      pflash,
 		PidFile:     filepath.Join(q.config.VMStorePath, q.id, "pid"),
 	}
-	if(q.arch.guestProtection() == sevProtection){
-    attestationId := ""
+	if q.arch.guestProtection() == sevProtection {
+		attestationId := ""
 
 		if q.config.GuestAttestation {
-      attestationId, err = q.arch.setupGuestAttestation(ctx, q.config.GuestAttestationProxy, q.config.SEVGuestPolicy)
+			attestationId, err = q.arch.setupSEVGuestAttestation(ctx, q.config.GuestAttestationProxy, q.config.SEVGuestPolicy)
 			if err != nil {
 				return err
 			}
 
-      // Guest must be stopped to inject launch secrets.
-      qemuConfig.Knobs.Stopped = true
-      q.arch.setSEVAttestationId(attestationId)
+			// Guest must be stopped to inject launch secrets.
+			qemuConfig.Knobs.Stopped = true
+			q.arch.setSEVAttestationId(attestationId)
 		} else {
 			q.Logger().Infof("SEV attestation skipped: %d", q.config.GuestAttestation)
 		}
 
-    qemuConfig.Devices, qemuConfig.Bios, err = q.arch.appendSEVObject(qemuConfig.Devices, firmwarePath, firmwareVolumePath, q.config.SEVGuestPolicy, attestationId)
+		qemuConfig.Devices, qemuConfig.Bios, err = q.arch.appendSEVObject(qemuConfig.Devices, firmwarePath, firmwareVolumePath, q.config.SEVGuestPolicy, attestationId)
 		if err != nil {
 			return err
 		}
 
-	}else{
+	} else {
 		qemuConfig.Devices, qemuConfig.Bios, err = q.arch.appendProtectionDevice(qemuConfig.Devices, firmwarePath, firmwareVolumePath)
 		if err != nil {
 			return err
@@ -818,43 +818,42 @@ func (q *qemu) setupVirtioMem(ctx context.Context) error {
 
 // guest must be paused. this will continue guest via qmp
 func (q *qemu) AttestVM(ctx context.Context) error {
-    if err := q.qmpSetup(); err != nil {
-        return err
-    }
-    kernelPath, err := q.config.KernelAssetPath()
-    if err != nil {
-      return err
-    }
+	if err := q.qmpSetup(); err != nil {
+		return err
+	}
+	kernelPath, err := q.config.KernelAssetPath()
+	if err != nil {
+		return err
+	}
 
-    initrdPath, err := q.config.InitrdAssetPath()
-    if err != nil {
-      return err
-    }
+	initrdPath, err := q.config.InitrdAssetPath()
+	if err != nil {
+		return err
+	}
 
-    firmwarePath, err := q.config.FirmwareAssetPath()
-    if err != nil {
-      return err
-    }
+	firmwarePath, err := q.config.FirmwareAssetPath()
+	if err != nil {
+		return err
+	}
 
-    kernelParameters := q.kernelParameters()
-    attestationId := q.arch.getSEVAttestationId()
+	kernelParameters := q.kernelParameters()
+	attestationId := q.arch.getSEVAttestationId()
 
-    if err := q.arch.prelaunchAttestation(
-      q.qmpMonitorCh.ctx,
-      q.qmpMonitorCh.qmp,
-      q.config.GuestAttestationProxy,
-      q.config.SEVGuestPolicy,
-      q.config.GuestAttestationKeyset,
-      attestationId,
-      kernelPath,
-      initrdPath,
-      firmwarePath,
-      kernelParameters);
-      err != nil {
-        return err
-    }
+	if err := q.arch.sevGuestAttestation(
+		q.qmpMonitorCh.ctx,
+		q.qmpMonitorCh.qmp,
+		q.config.GuestAttestationProxy,
+		q.config.SEVGuestPolicy,
+		q.config.GuestAttestationKeyset,
+		attestationId,
+		kernelPath,
+		initrdPath,
+		firmwarePath,
+		kernelParameters); err != nil {
+		return err
+	}
 
-    return nil
+	return nil
 }
 
 // startSandbox will start the Sandbox's VM.
@@ -945,7 +944,6 @@ func (q *qemu) StartVM(ctx context.Context, timeout int) error {
 	if err != nil {
 		return err
 	}
-
 
 	if q.config.BootFromTemplate {
 		if err = q.bootFromTemplate(); err != nil {

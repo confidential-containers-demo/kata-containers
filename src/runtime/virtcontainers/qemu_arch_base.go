@@ -43,14 +43,14 @@ type qemuArch interface {
 	// machine returns the machine type
 	machine() govmmQemu.Machine
 
-	// protection returns guest protection type 
+	// protection returns guest protection type
 	guestProtection() guestProtection
 
-  // set attestation id for SEV guests with pre-attestation
-  setSEVAttestationId(attestation_id string)
+	// set attestation id for SEV guests with pre-attestation
+	setSEVAttestationId(attestation_id string)
 
-  // set attestation id for SEV guests with pre-attestation
-  getSEVAttestationId() string
+	// set attestation id for SEV guests with pre-attestation
+	getSEVAttestationId() string
 
 	// qemuPath returns the path to the QEMU binary
 	qemuPath() string
@@ -161,22 +161,22 @@ type qemuArch interface {
 	// be used with the -bios option, ommit -bios option if the path is empty.
 	appendProtectionDevice(devices []govmmQemu.Device, firmware, firmwareVolume string) ([]govmmQemu.Device, string, error)
 
-	appendSEVObject(devices []govmmQemu.Device, firmware, firmwareVolume string, policy uint32, launch_id string) ([]govmmQemu.Device, string, error)
+	appendSEVObject(devices []govmmQemu.Device, firmware, firmwareVolume string, policy uint32, launchId string) ([]govmmQemu.Device, string, error)
 
 	// setup guest attestation
-	setupGuestAttestation(ctx context.Context, proxy string, policy uint32) (string, error)
+	setupSEVGuestAttestation(ctx context.Context, proxy string, policy uint32) (string, error)
 
 	// wait for prelaunch attestation to complete
-	prelaunchAttestation(ctx context.Context, 
-    qmp *govmmQemu.QMP,
-    proxy string,
-    policy uint32,
-    keyset string,
-    launch_id string,
-    kernelPath string,
-    initrdPath string,
-    fwPath string,
-    kernelParameters string) error
+	sevGuestAttestation(ctx context.Context,
+		qmp *govmmQemu.QMP,
+		proxy string,
+		policy uint32,
+		keyset string,
+		launchId string,
+		kernelPath string,
+		initrdPath string,
+		fwPath string,
+		kernelParameters string) error
 }
 
 type qemuArchBase struct {
@@ -190,12 +190,12 @@ type qemuArchBase struct {
 	memoryOffset         uint64
 	networkIndex         int
 	// Exclude from lint checking for it is ultimately only used in architecture-specific code
-	protection    guestProtection //nolint:structcheck
-  SEVAttestationId string
-	nestedRun     bool
-	vhost         bool
-	disableNvdimm bool
-	dax           bool
+	protection       guestProtection //nolint:structcheck
+	SEVAttestationId string
+	nestedRun        bool
+	vhost            bool
+	disableNvdimm    bool
+	dax              bool
 }
 
 const (
@@ -291,11 +291,11 @@ func (q *qemuArchBase) guestProtection() guestProtection {
 }
 
 func (q *qemuArchBase) setSEVAttestationId(attestation_id string) {
-  q.SEVAttestationId = attestation_id 
+	q.SEVAttestationId = attestation_id
 }
 
 func (q *qemuArchBase) getSEVAttestationId() string {
-  return q.SEVAttestationId
+	return q.SEVAttestationId
 }
 
 func (q *qemuArchBase) qemuPath() string {
